@@ -20,7 +20,7 @@ on:
   # triggers make a broken base image or a missing package fail here instead,
   # while the change is still in front of whoever made it.
   push:
-    branches: [python]
+    branches: [main]
     paths:
       - "docker/**"
       - "web/**"
