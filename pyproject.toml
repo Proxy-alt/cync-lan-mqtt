@@ -47,9 +47,9 @@ dev = [
 cync-lan = "cync_lan_mqtt.main:main"
 
 [project.urls]
-Homepage = "https://github.com/Proxy-alt/cync-lan"
-Repository = "https://github.com/Proxy-alt/cync-lan"
-Issues = "https://github.com/Proxy-alt/cync-lan/issues"
+Homepage = "https://github.com/Proxy-alt/cync-lan-mqtt"
+Repository = "https://github.com/Proxy-alt/cync-lan-mqtt"
+Issues = "https://github.com/Proxy-alt/cync-lan-mqtt/issues"
 
 [tool.ruff]
 line-length = 88
