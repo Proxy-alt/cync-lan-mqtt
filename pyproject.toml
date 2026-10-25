@@ -44,7 +44,7 @@ dev = [
 ]
 
 [project.scripts]
-cync-lan = "cync_lan_mqtt.main:main"
+cync-lan = "cync_lan_mqtt.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Proxy-alt/cync-lan-mqtt"
