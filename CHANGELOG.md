@@ -1,3 +1,29 @@
+### 0.2.4
+
+**`--env` files now work.** The add-on loaded the env file only after it had
+already read its settings, so anything set there was silently ignored: the MQTT
+broker host, username and password, the exporter settings, `CYNC_DEBUG` and the
+rest. With an env file as the only configuration, the add-on fell back to
+`homeassistant.local` with no credentials. The file is now applied before any
+setting is read. Configuration through real environment variables (the Docker
+`environment:` block or the Home Assistant add-on options) was never affected.
+
+**Requires `cync-lan` 0.16.2.** This add-on still accepted 0.5.3, so an existing
+install could keep a core library ten minor versions old. 0.16.2 brings:
+- capture logs that are pruned after 14 days, where before they grew without
+  limit (one install reached 10 GB)
+- devices marked offline as soon as their connection drops
+- no more crash when two commands reach a bridge that has just lost power
+- with cloud passthrough, a dropped device no longer leaves the Cync app
+  sending commands into a dead connection
+
+CI now also tests against the oldest core this package accepts.
+
+**New "Connected via" diagnostic sensor on every device.** Shows which Wi-Fi
+device last relayed the device's status. For Bluetooth-only devices, which
+never connect to the add-on themselves, it is the only presence signal there
+is. The Home Assistant integration has had the same sensor for a while.
+
 ### 0.2.3
 
 **Security: the published Docker image no longer contains a shared private
