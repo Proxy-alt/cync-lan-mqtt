@@ -237,3 +237,67 @@ def test_kelvin_round_trip_stays_in_range(client, kelvin, expected_range):
     cync = client.kelvin2cync(kelvin, node)
 
     assert expected_range[0] <= cync <= expected_range[1]
+
+
+# --------------------------------------------------------------------------
+# relay_source ("Connected via")
+# --------------------------------------------------------------------------
+
+
+def _relayed_node(relay_name) -> MagicMock:
+    node = MagicMock()
+    node.hass_id = "1234-7"
+    if relay_name is None:
+        node.relay_source = None
+    else:
+        node.relay_source.node.name = relay_name
+    return node
+
+
+async def test_relay_source_publishes_only_when_it_changes(client):
+    client.pub_entity_state = AsyncMock(return_value=True)
+    node = _relayed_node("Kitchen Bulb")
+
+    assert await client.publish_relay_source(node) is True
+    assert await client.publish_relay_source(node) is False
+
+    node.relay_source.node.name = "Hall Switch"
+    assert await client.publish_relay_source(node) is True
+
+    sent = [
+        (c.args[1], c.kwargs["tpc"], c.kwargs["retain"])
+        for c in client.pub_entity_state.call_args_list
+    ]
+    topic = f"{client.topic}/status/1234-7/relay_source"
+    assert sent == [(b"Kitchen Bulb", topic, True), (b"Hall Switch", topic, True)]
+
+
+async def test_no_relay_yet_publishes_nothing(client):
+    client.pub_entity_state = AsyncMock(return_value=True)
+
+    assert await client.publish_relay_source(_relayed_node(None)) is False
+    client.pub_entity_state.assert_not_called()
+
+
+async def test_a_failed_publish_is_retried_on_the_next_update(client):
+    client.pub_entity_state = AsyncMock(return_value=False)
+    node = _relayed_node("Kitchen Bulb")
+
+    assert await client.publish_relay_source(node) is False
+    client.pub_entity_state.return_value = True
+    assert await client.publish_relay_source(node) is True
+
+
+async def test_relay_source_entity_is_a_diagnostic_sensor(client):
+    client.pub_entity_state = AsyncMock(return_value=True)
+    node = _relayed_node("Kitchen Bulb")
+    client._relay_published[node.hass_id] = "Kitchen Bulb"
+
+    await client._publish_relay_source_entity(node, {"name": "Lamp"}, "1234_7")
+
+    topic, conf = client.publish_json_msg.call_args.args
+    assert topic == f"{client.ha_topic}/sensor/1234_7_relay_source/config"
+    assert conf["entity_category"] == "diagnostic"
+    assert conf["state_topic"] == f"{client.topic}/status/1234-7/relay_source"
+    # Rediscovery resends the value even though it has not changed.
+    client.pub_entity_state.assert_awaited_once()

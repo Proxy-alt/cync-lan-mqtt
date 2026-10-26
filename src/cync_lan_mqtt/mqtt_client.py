@@ -168,6 +168,9 @@ class MQTTClient:
         self.ha_topic = ha_topic
         # flag name -> its pending auto-off timer (see _mark_app_active)
         self._app_active_expiry_tasks: Dict[str, asyncio.Task] = {}
+        # hass_id -> relay name last published, so a status update that
+        # arrives through the same relay as the last one publishes nothing.
+        self._relay_published: Dict[str, str] = {}
 
     async def start(self):
         itr = 0
@@ -959,9 +962,34 @@ class MQTTClient:
         )
         # Retained so the last known trigger state survives addon/HA restarts
         # instead of showing "Unknown" until the next real motion event.
-        return await self.pub_entity_state(
+        published = await self.pub_entity_state(
             node, state, 0, from_pkt=from_pkt, tpc=tpc, retain=True
         )
+        await self.publish_relay_source(node)
+        return published
+
+    async def publish_relay_source(self, node: CyncDevice) -> bool:
+        """Publish which Wi-Fi device last relayed this device's status.
+
+        Core sets CyncDevice.relay_source at every status parse site, just
+        before the state reaches this client, so this rides along with each
+        state publish and only sends when the relay changes. Retained, so it
+        survives add-on and Home Assistant restarts.
+        """
+        relay = node.relay_source
+        name = relay.node.name if relay is not None and relay.node is not None else None
+        if name is None or self._relay_published.get(node.hass_id) == name:
+            return False
+        published = await self.pub_entity_state(
+            node,
+            name.encode(),
+            None,
+            tpc=f"{self.topic}/status/{node.hass_id}/relay_source",
+            retain=True,
+        )
+        if published:
+            self._relay_published[node.hass_id] = name
+        return published
 
     async def parse_entity_state(
         self,
@@ -1053,9 +1081,11 @@ class MQTTClient:
                     )
             mqtt_dev_state = json.dumps(mqtt_dev_state).encode()
 
-        return await self.pub_entity_state(
+        published = await self.pub_entity_state(
             node, mqtt_dev_state, sub_id, from_pkt=from_pkt
         )
+        await self.publish_relay_source(node)
+        return published
 
     async def send_birth_msg(self) -> bool:
         lp = f"{self.lp}send_birth_msg:"
@@ -1299,6 +1329,40 @@ class MQTTClient:
 
         return device_registry_struct
 
+    async def _publish_relay_source_entity(
+        self, node: CyncDevice, device_registry_struct: dict, unique_id: str
+    ):
+        """A "Connected via" diagnostic sensor, fed by publish_relay_source().
+
+        The only presence signal a Bluetooth-only device has: it never holds a
+        connection of its own, so the Wi-Fi device relaying its status is all
+        there is to show. The Home Assistant integration has the same sensor.
+
+        No availability topic: multi-entity devices publish availability per
+        entity only, and "last relayed via" is still worth reading once the
+        device has gone offline.
+        """
+        entity_unique_id = f"{unique_id}_relay_source"
+        obj_id = f"cync_lan_{entity_unique_id}"
+        relay_entity_conf = {
+            "object_id": obj_id,
+            "default_entity_id": f"sensor.{obj_id}",
+            "name": "Connected via",
+            "state_topic": f"{self.topic}/status/{node.hass_id}/relay_source",
+            "entity_category": "diagnostic",
+            "icon": "mdi:access-point-network",
+            "unique_id": entity_unique_id,
+            "origin": ORIGIN_STRUCT,
+            "device": device_registry_struct,
+        }
+        await self.publish_json_msg(
+            f"{self.ha_topic}/sensor/{entity_unique_id}/config", relay_entity_conf
+        )
+        # Rediscovery follows a broker or HA restart - send the current value
+        # again rather than trust that the retained one survived.
+        self._relay_published.pop(node.hass_id, None)
+        await self.publish_relay_source(node)
+
     async def homeassistant_discovery(self) -> bool:
         """Build each configured Cync device for HASS device registry"""
         lp = f"{self.lp}hass:"
@@ -1340,6 +1404,9 @@ class MQTTClient:
                         "model": model_str,
                         "via_device": str(g.uuid),
                     }
+                    await self._publish_relay_source_entity(
+                        node_repr, device_registry_struct, unique_id
+                    )
 
                     if (
                         not node_repr.is_light
